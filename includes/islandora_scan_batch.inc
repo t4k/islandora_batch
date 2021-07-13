@@ -169,6 +169,44 @@ class IslandoraScanBatch extends IslandoraBatchPreprocessor {
     foreach ($grouped as $base_name => $object_info) {
       $ingest_object = new $object_class($this->connection, $base_name, $object_info, $this->parameters);
 
+      // HACK: allow PIDs to be specified for bookCModel objects with the same
+      // format as in islandora_batch_with_derivs
+      if ($this->parameters['content_models']) {
+        if (in_array('islandora:bookCModel', $this->parameters['content_models'])) {
+          // Get PID from object directory name. We use '+' in directory names
+          // to represent the PID's ':' because that character is guaranteed
+          // to not exist in the PID (it's not a valid character in PIDs) and
+          // it is filesystem safe.
+          // NOTE: this procedure will be skipped and a standard incremental PID
+          // will be generated if no '+' character exists in the directory name
+          if (preg_match('/\+/', $base_name)) {
+            $pid = preg_replace('/\+/', ':', $base_name);
+            // Check whether an object with PID exists, and if so,
+            // report that we are skipping ingest on this object.
+            if (islandora_object_load($pid)) {
+              // @todo: This check covers the case where an object that has the
+              // incoming PID already exists, but we also need to check the
+              // {islandora_batch_queue} table. If a previous batch ingest
+              // failed and the incoming PID existed in that failed batch,
+              // a subsequent batch ingest containing the PID will fail because
+              // of integrity errors on this table.
+              watchdog(
+                'islandora_batch',
+                'An object with the !pid already exists, skipping ingest.',
+                array('!pid' => $pid),
+                WATCHDOG_WARNING
+              );
+              continue;
+            }
+            else {
+              // Add the instance to the Islandora batch queue using the
+              // existing PID.
+              $ingest_object->id = $pid;
+            }
+          }
+        }
+      }
+
       // XXX: Might be better to have this actually handled as another
       // "preprocessor", so arbitrary "tree" structures might be built?
       $added = array_merge($added, $this->preprocessChildren($ingest_object));
